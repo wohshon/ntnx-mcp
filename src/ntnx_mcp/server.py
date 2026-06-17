@@ -1,4 +1,8 @@
 """MCP Server implementation for Nutanix Prism Central."""
+import asyncio
+from starlette.middleware import Middleware
+from starlette.middleware.cors import CORSMiddleware
+from starlette.responses import StreamingResponse
 import json
 import sys
 from typing import Any
@@ -7,6 +11,8 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import Response, JSONResponse
 from starlette.routing import Route
+# 1. Add these imports
+from starlette.responses import StreamingResponse
 
 from ntnx_mcp.client import PrismCentralClient
 from ntnx_mcp.config import Settings, get_settings
@@ -31,6 +37,12 @@ def get_app():
         for t in raw_tools
     ]
 
+    async def sse_endpoint(request: Request):
+    # This is the bare minimum handshake NAI expects
+        return Response(
+            "data: endpoint=/mcp\n\n",
+            media_type="text/event-stream"
+        )
     async def mcp_endpoint(request: Request):
         body = await request.body()
         print(f"-> RECEIVED REQUEST: {request.method} {request.url.path}", file=sys.stderr)
@@ -91,8 +103,21 @@ def get_app():
             
         return JSONResponse({"error": "Method not allowed"}, status_code=405)
 
-    return Starlette(debug=True, routes=[Route("/mcp", mcp_endpoint, methods=["POST", "DELETE", "GET"])])
+    # Define middleware to solve the browser CORS/Add Server error
+    middleware = [
+        Middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+    ]
 
+    #return Starlette(debug=True, routes=[Route("/mcp", mcp_endpoint, methods=["POST", "DELETE", "GET"])])
+    return Starlette(debug=True, middleware=middleware,routes=[
+        Route("/mcp", mcp_endpoint, methods=["POST", "DELETE", "GET"]),
+        Route("/sse", sse_endpoint, methods=["GET"]) # NAI will hit this first
+    ])
 def main() -> None:
     """Entry point: Start Uvicorn directly."""
     app = get_app()
