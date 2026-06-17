@@ -1,22 +1,22 @@
 """MCP Server implementation for Nutanix Prism Central."""
 
-import asyncio
-import json
 import sys
+import asyncio
+import uvicorn
 from typing import Any
+from starlette.applications import Starlette
+from starlette.routing import Route
 
 from mcp.server import Server
-from mcp.server.stdio import stdio_server
-from mcp.types import (
-    TextContent,
-    Tool,
-)
+from mcp.server.sse import SseServerTransport
+from mcp.types import TextContent, Tool
 
 from ntnx_mcp.client import PrismCentralClient
 from ntnx_mcp.config import Settings, get_settings
 from ntnx_mcp.executor import ToolExecutor
 from ntnx_mcp.tools.registry import get_all_tools
 
+# Add your existing create_server function here if it's in this file
 
 def create_server(settings: Settings) -> tuple[Server, ToolExecutor]:
     """Create and configure the MCP server."""
@@ -60,27 +60,28 @@ def create_server(settings: Settings) -> tuple[Server, ToolExecutor]:
 
 
 async def run_server() -> None:
-    """Run the MCP server."""
     settings = get_settings()
+    # Ensure create_server is defined or imported
+    server, _ = create_server(settings) 
+    
+    # Initialize transport
+    sse = SseServerTransport("/messages")
+    
+    # Define app manually using confirmed methods
+    app = Starlette(
+        debug=True,
+        routes=[
+            Route("/sse", endpoint=sse.connect_sse),
+            Route("/messages", endpoint=sse.handle_post_message, methods=["POST"]),
+        ],
+    )
 
-    if not settings.has_credentials:
-        print(
-            "Error: No credentials configured. Set either PRISM_CENTRAL_API_KEY "
-            "or both PRISM_CENTRAL_USERNAME and PRISM_CENTRAL_PASSWORD.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    print(f"Starting Nutanix MCP server on port 8080", file=sys.stderr)
+    
+    # Start server
+    config = uvicorn.Config(app, host="0.0.0.0", port=8080)
+    await uvicorn.Server(config).serve()
 
-    print(f"Starting Nutanix MCP server for {settings.host}:{settings.port}", file=sys.stderr)
-
-    server, executor = create_server(settings)
-
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream,
-            write_stream,
-            server.create_initialization_options(),
-        )
 
 
 def main() -> None:
