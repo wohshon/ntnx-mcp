@@ -67,10 +67,22 @@ from starlette.responses import JSONResponse, Response
 
 async def run_server() -> None:
     settings = get_settings()
-    server, _ = create_server(settings)
     
-    # We NO LONGER use SseServerTransport because NAI is stateless.
+    # We grab BOTH the server and the executor here
+    server, executor = create_server(settings)
+    
+    # Pre-format the tools so they are ready for the NAI handshake
+    from ntnx_mcp.tools.registry import get_all_tools
+    raw_tools = get_all_tools()
+    formatted_tools = [
+        {
+            "name": t["name"],
+            "description": t["description"],
+            "inputSchema": t["inputSchema"]
+        } for t in raw_tools
+    ]
 
+    # We NO LONGER use SseServerTransport because NAI is stateless.
     async def asgi_wrapper(scope, receive, send):
         if scope["type"] == "http":
             if scope["method"] == "POST":
@@ -100,20 +112,56 @@ async def run_server() -> None:
                         
                     # 2. THE ACKNOWLEDGEMENT
                     elif method == "notifications/initialized":
-                        # Notifications don't require a result body
                         resp = JSONResponse({"jsonrpc": "2.0"})
                         return await resp(scope, receive, send)
                         
-                    # 3. THE TOOL DISCOVERY
+                    # 3. THE TOOL DISCOVERY (FIXED)
                     elif method == "tools/list":
-                        print(f"-> NAI REQUESTED TOOLS!", file=sys.stderr)
-                        # We return an empty tools list for now just to prove the connection works.
-                        # Once this connects, we will map your actual Nutanix tools here.
+                        print(f"-> Serving {len(formatted_tools)} tools to NAI!", file=sys.stderr)
                         response_data = {
                             "jsonrpc": "2.0",
                             "id": msg_id,
-                            "result": {"tools": []}
+                            "result": {"tools": formatted_tools}
                         }
+                        resp = JSONResponse(response_data)
+                        return await resp(scope, receive, send)
+                    
+                    # 4. TOOL EXECUTION (NEW: Actually run the tools!)
+                    elif method == "tools/call":
+                        params = payload.get("params", {})
+                        tool_name = params.get("name")
+                        tool_args = params.get("arguments", {})
+                        print(f"-> NAI CALLING TOOL: {tool_name} with args: {tool_args}", file=sys.stderr)
+                        
+                        try:
+                            # Pass the request to your Nutanix executor
+                            result = await executor.execute(tool_name, tool_args)
+                            
+                            # Format the response back to NAI
+                            if "error" in result:
+                                error_text = f"Error: {result['error'].get('message', 'Unknown')}"
+                                mcp_content = [{"type": "text", "text": error_text}]
+                                is_error = True
+                            else:
+                                mcp_content = [{"type": "text", "text": json.dumps(result, indent=2)}]
+                                is_error = False
+
+                            response_data = {
+                                "jsonrpc": "2.0",
+                                "id": msg_id,
+                                "result": {
+                                    "content": mcp_content,
+                                    "isError": is_error
+                                }
+                            }
+                        except Exception as e:
+                            print(f"-> Tool Execution Exception: {e}", file=sys.stderr)
+                            response_data = {
+                                "jsonrpc": "2.0",
+                                "id": msg_id,
+                                "error": {"code": -32603, "message": str(e)}
+                            }
+                            
                         resp = JSONResponse(response_data)
                         return await resp(scope, receive, send)
                         
@@ -137,7 +185,6 @@ async def run_server() -> None:
     print("Starting Stateless JSON-RPC MCP server on port 8080", file=sys.stderr)
     config = uvicorn.Config(asgi_wrapper, host="0.0.0.0", port=8080)
     await uvicorn.Server(config).serve()
-
 
 def main() -> None:
     """Entry point for the MCP server."""
