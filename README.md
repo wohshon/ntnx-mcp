@@ -1,3 +1,8 @@
+
+Add on notes:
+
+
+---
 # ntnx-mcp
 
 An MCP (Model Context Protocol) server that connects AI assistants to the Nutanix Prism Central v4 API. This gives any MCP-compatible AI agent (Cursor, Claude Desktop, etc.) the ability to manage Nutanix infrastructure through natural language.
