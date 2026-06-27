@@ -1,0 +1,6 @@
+fastmcp
+mcp[cli]>=1.0.0
+uvicorn
+starlette
+httpx
+pydantic
