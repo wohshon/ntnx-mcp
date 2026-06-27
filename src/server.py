@@ -2,7 +2,7 @@ from fastmcp import FastMCP
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 import random
-from ntnx_mcp.tools.registry import ToolRegistry
+from ntnx_mcp.tools.registry import ToolRegistry, get_all_tools
 from ntnx_mcp.client import PrismCentralClient
 from ntnx_mcp.executor import ToolExecutor
 from ntnx_mcp.config import get_settings
@@ -26,7 +26,8 @@ type_mapping = {
     "object": "dict"
 }
 
-for tool_def in ToolRegistry.vmm_tools():
+# for tool_def in ToolRegistry.vmm_tools():
+for tool_def in get_all_tools():
     executor.register_tool(tool_def)
     tool_name = tool_def["name"]
     tool_desc = tool_def.get("description", "Nutanix Tool")
